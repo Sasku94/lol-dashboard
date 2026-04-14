@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>LoL PRO Dashboard</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: Arial;
+  background: #0b0f19;
+  color: white;
+  transition: 0.3s;
+}
+
+.light {
+  background: #f3f4f6;
+  color: black;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  padding: 15px 20px;
+}
+
+button {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+  padding: 20px;
+}
+
+.card {
+  background: #1f2937;
+  border-radius: 20px;
+  padding: 20px;
+}
+
+.light .card {
+  background: white;
+}
+
+.rank-icon {
+  width: 50px;
+}
+
+.match {
+  font-size: 12px;
+  margin-top: 5px;
+  opacity: 0.8;
+}
+
+.green { color: #22c55e; }
+.red { color: #ef4444; }
+</style>
+</head>
+
+<body>
+
+<header>
+  <h2>⚔️ LoL Dashboard PRO</h2>
+  <div>
+    <button onclick="toggleTheme()">🌙 Toggle Mode</button>
+    <button onclick="sortByRank()">Sort Rank</button>
+  </div>
+</header>
+
+<h3 id="best"></h3>
+
+<div class="grid" id="grid"></div>
+
+<script>
+const API_KEY = "DEIN_API_KEY";
+
+const accounts = [
+  { gameName: "OnlyBlueCard", tagLine: "TFLUV" },
+  { gameName: "v9 Sasku", tagLine: "VNINE" },
+  { gameName: "Indor", tagLine: "Erbe" },
+  { gameName: "sasku94", tagLine: "4016" }
+];
+
+let results = [];
+
+function toggleTheme() {
+  document.body.classList.toggle("light");
+}
+
+function getRankValue(tier) {
+  const order = ["IRON","BRONZE","SILVER","GOLD","PLATINUM","EMERALD","DIAMOND","MASTER","GRANDMASTER","CHALLENGER"];
+  return order.indexOf(tier);
+}
+
+function sortByRank() {
+  results.sort((a,b) => getRankValue(b.tier) - getRankValue(a.tier));
+  render();
+}
+
+async function fetchData(acc) {
+  const accData = await fetch(`https://europe.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(acc.gameName)}/${acc.tagLine}?api_key=${API_KEY}`).then(r=>r.json());
+
+  const summ = await fetch(`https://euw1.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${accData.puuid}?api_key=${API_KEY}`).then(r=>r.json());
+
+  const ranked = await fetch(`https://euw1.api.riotgames.com/lol/league/v4/entries/by-summoner/${summ.id}?api_key=${API_KEY}`).then(r=>r.json());
+
+  return { puuid: accData.puuid, ranked: ranked[0], name: acc.gameName };
+}
+
+async function getMatches(puuid) {
+  const ids = await fetch(`https://europe.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?count=5&api_key=${API_KEY}`).then(r=>r.json());
+
+  let games = [];
+  let kdaTotal = 0;
+
+  for (let id of ids) {
+    const data = await fetch(`https://europe.api.riotgames.com/lol/match/v5/matches/${id}?api_key=${API_KEY}`).then(r=>r.json());
+
+    const p = data.info.participants.find(x => x.puuid === puuid);
+
+    const kda = ((p.kills + p.assists) / (p.deaths || 1)).toFixed(2);
+    kdaTotal += parseFloat(kda);
+
+    games.push({
+      champ: p.championName,
+      win: p.win,
+      kda
+    });
+  }
+
+  return {
+    games,
+    avgKDA: (kdaTotal / games.length).toFixed(2)
+  };
+}
+
+function render() {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+
+  let best = results.sort((a,b)=>b.lp - a.lp)[0];
+  document.getElementById("best").innerText = `🏆 Best Account: ${best.name} (${best.tier})`;
+
+  results.forEach(r => {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    card.innerHTML = `
+      <div>
+        <img class="rank-icon" src="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/images/ranked-emblem/emblem-${r.tier.toLowerCase()}.png">
+      </div>
+      <h3>${r.name}</h3>
+      <div>${r.tier} ${r.rank} - ${r.lp} LP</div>
+      <div>Winrate: ${r.winrate}%</div>
+      <div>KDA: ${r.avgKDA}</div>
+
+      <div>
+        ${r.matches.map(m => `
+          <div class="match ${m.win ? "green":"red"}">
+            ${m.champ} - ${m.kda} KDA ${m.win ? "✔":"❌"}
+          </div>
+        `).join("")}
+      </div>
+    `;
+
+    grid.appendChild(card);
+  });
+}
+
+async function init() {
+  results = [];
+
+  for (let acc of accounts) {
+    const data = await fetchData(acc);
+    const r = data.ranked;
+
+    const matches = await getMatches(data.puuid);
+
+    const winrate = ((r.wins/(r.wins+r.losses))*100).toFixed(1);
+
+    results.push({
+      name: acc.gameName,
+      tier: r.tier,
+      rank: r.rank,
+      lp: r.leaguePoints,
+      winrate,
+      avgKDA: matches.avgKDA,
+      matches: matches.games
+    });
+  }
+
+  render();
+}
+
+init();
+
+// 🔁 AUTO REFRESH (alle 2 Minuten)
+setInterval(init, 120000);
+
+</script>
+
+</body>
+</html>
